@@ -56,12 +56,7 @@ const chartTheme = {
   dataLabels: { enabled: false },
   grid: { borderColor: '#2f343a' },
   xaxis: { labels: { style: { colors: '#9aa0a6' } } },
-  yaxis: {
-    labels: {
-      style: { colors: '#9aa0a6' },
-      formatter: (value) => Number(value).toFixed(2),
-    },
-  },
+  yaxis: { labels: { style: { colors: '#9aa0a6' } } },
   legend: { labels: { colors: '#e8eaed' } },
   tooltip: {
     y: { formatter: (value) => Number(value).toFixed(2) },
@@ -119,6 +114,12 @@ const hasAnyData = computed(
           stroke: { curve: 'smooth', width: 3 },
           colors: ['#8ab4f8'],
           xaxis: { categories: netWorthSeries.categories, labels: { style: { colors: '#9aa0a6' } } },
+          yaxis: {
+            labels: {
+              style: { colors: '#9aa0a6' },
+              formatter: (value) => Number(value).toFixed(2),
+            },
+          },
         }"
         :series="netWorthSeries.series"
       />

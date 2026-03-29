@@ -117,18 +117,33 @@ const dailyIncomeExpense = computed(() => {
   }
 })
 
+const incomeExpenseSummary = computed(() => {
+  let income = 0
+  let expense = 0
+
+  filteredTransactions.value.forEach((item) => {
+    if (item.type === 'income') {
+      income += Number(item.amount || 0)
+    }
+    if (item.type === 'expense') {
+      expense += Number(item.amount || 0)
+    }
+  })
+
+  return {
+    labels: ['Ingresos', 'Gastos'],
+    values: [Number(income.toFixed(2)), Number(expense.toFixed(2))],
+    hasData: income > 0 || expense > 0,
+  }
+})
+
 const chartTheme = {
   chart: { toolbar: { show: false }, background: 'transparent' },
   dataLabels: { enabled: false },
   grid: { borderColor: '#2f343a' },
   legend: { labels: { colors: '#e8eaed' } },
   xaxis: { labels: { style: { colors: '#9aa0a6' } } },
-  yaxis: {
-    labels: {
-      style: { colors: '#9aa0a6' },
-      formatter: (value) => Number(value).toFixed(2),
-    },
-  },
+  yaxis: { labels: { style: { colors: '#9aa0a6' } } },
   tooltip: {
     y: { formatter: (value) => Number(value).toFixed(2) },
   },
@@ -223,6 +238,29 @@ const deleteTransaction = (id) => {
 
     <div v-if="section === 'charts'" class="space-y-3">
       <BaseCard>
+        <h3 class="mb-3 text-sm font-semibold text-text">Ingresos vs gastos (período)</h3>
+        <apexchart
+          v-if="incomeExpenseSummary.hasData"
+          type="bar"
+          height="260"
+          :options="{
+            ...chartTheme,
+            colors: ['#81c995', '#f28b82'],
+            plotOptions: { bar: { borderRadius: 8, columnWidth: '45%', distributed: true } },
+            xaxis: { categories: incomeExpenseSummary.labels, labels: { style: { colors: '#9aa0a6' } } },
+            yaxis: {
+              labels: {
+                style: { colors: '#9aa0a6' },
+                formatter: (value) => Number(value).toFixed(2),
+              },
+            },
+          }"
+          :series="[{ name: 'Monto', data: incomeExpenseSummary.values }]"
+        />
+        <p v-else class="text-xs text-muted">No hay ingresos ni gastos para el período filtrado.</p>
+      </BaseCard>
+
+      <BaseCard>
         <h3 class="mb-3 text-sm font-semibold text-text">Gastos por categoría (mes actual)</h3>
         <apexchart
           v-if="monthExpenseByCategory.hasData"
@@ -233,6 +271,7 @@ const deleteTransaction = (id) => {
             colors: ['#f28b82'],
             plotOptions: { bar: { borderRadius: 6, horizontal: true, barHeight: '45%' } },
             xaxis: { categories: monthExpenseByCategory.labels, labels: { style: { colors: '#9aa0a6' } } },
+            yaxis: { labels: { style: { colors: '#9aa0a6' } } },
           }"
           :series="[{ name: 'Gasto', data: monthExpenseByCategory.values }]"
         />
@@ -250,6 +289,12 @@ const deleteTransaction = (id) => {
             stroke: { curve: 'smooth', width: 3 },
             colors: ['#81c995', '#f28b82'],
             xaxis: { categories: dailyIncomeExpense.categories, labels: { style: { colors: '#9aa0a6' } } },
+            yaxis: {
+              labels: {
+                style: { colors: '#9aa0a6' },
+                formatter: (value) => Number(value).toFixed(2),
+              },
+            },
           }"
           :series="[
             { name: 'Ingresos', data: dailyIncomeExpense.income },
@@ -301,7 +346,12 @@ const deleteTransaction = (id) => {
             <div class="flex items-center gap-3">
               <span class="text-xs text-muted">{{ getAccountName(transaction.accountId) }}</span>
               <span v-if="transaction.type === 'transfer'" class="text-xs text-muted">→ {{ getAccountName(transaction.destinationAccountId) }}</span>
-              <span v-if="transaction.type !== 'transfer'" class="text-xs text-muted">{{ getCategoryName(transaction.categoryId) }}</span>
+              <span
+                v-if="transaction.type !== 'transfer'"
+                class="inline-flex rounded-lg border border-border bg-surface-2 px-2 py-0.5 text-xs text-muted shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+              >
+                {{ getCategoryName(transaction.categoryId) }}
+              </span>
             </div>
             <p
               class="text-lg font-semibold"
