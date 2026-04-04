@@ -1,401 +1,392 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
-import { useAuthStore } from '@/stores/auth'
-import { useFinanceStore } from '@/stores/finance'
-import { formatUSD } from '@/services/currency'
-import BaseCard from '@/components/ui/BaseCard.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
-import BaseInput from '@/components/ui/BaseInput.vue'
-import BaseSelect from '@/components/ui/BaseSelect.vue'
-import BaseModal from '@/components/ui/BaseModal.vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import BaseCard from '../components/base/BaseCard.vue'
+import BaseModal from '../components/base/BaseModal.vue'
+import BaseInput from '../components/base/BaseInput.vue'
+import BaseSelect from '../components/base/BaseSelect.vue'
+import BaseButton from '../components/base/BaseButton.vue'
+import ActionButtons from '../components/base/ActionButtons.vue'
+import { useFixedExpensesStore } from '../stores/fixedExpenses'
+import { useFixedIncomesStore } from '../stores/fixedIncomes'
+import { useAllocationPlansStore } from '../stores/allocationPlans'
+import { useUiStore } from '../stores/ui'
+import { formatMoney } from '../lib/format'
 
-const authStore = useAuthStore()
-const financeStore = useFinanceStore()
-const search = ref('')
-const showBudgetModal = ref(false)
-const showGoalModal = ref(false)
-const showSubscriptionModal = ref(false)
-const showEditBudgetModal = ref(false)
-const showEditGoalModal = ref(false)
-const showEditSubscriptionModal = ref(false)
+const fixedExpensesStore = useFixedExpensesStore()
+const fixedIncomesStore = useFixedIncomesStore()
+const allocationPlansStore = useAllocationPlansStore()
+const uiStore = useUiStore()
 
-const budgetForm = reactive({ name: '', scope: 'category', monthlyLimit: '' })
-const goalForm = reactive({ name: '', targetAmount: '', savedAmount: '', interestRate: '', deadline: '' })
-const subscriptionForm = reactive({ name: '', amount: '', cadence: 'monthly', nextChargeDate: '' })
-const editBudgetForm = reactive({ id: '', name: '', scope: 'category', monthlyLimit: '', spent: '' })
-const editGoalForm = reactive({ id: '', name: '', targetAmount: '', savedAmount: '', interestRate: '', deadline: '' })
-const editSubscriptionForm = reactive({ id: '', name: '', amount: '', cadence: 'monthly', nextChargeDate: '' })
+const open = ref(false)
+const entity = ref('expense')
+const editing = ref(null)
+const activeSection = ref('expenses')
 
-const budgetsWithAlert = computed(() =>
-  financeStore.budgets
-    .filter((budget) => budget.name.toLowerCase().includes(search.value.toLowerCase()))
-    .map((budget) => ({
-      ...budget,
-      ratio: budget.monthlyLimit > 0 ? (budget.spent / budget.monthlyLimit) * 100 : 0,
-    })),
+const form = reactive({
+  name: '',
+  amount: 0,
+  frequency: 'monthly',
+  savings_percent: 20,
+  monthly_expenses_percent: 60,
+  investments_percent: 20,
+})
+
+const frequencyOptions = [
+  { value: 'monthly', label: 'Mensual' },
+  { value: 'yearly', label: 'Anual' },
+]
+
+onMounted(async () => {
+  await Promise.all([fixedExpensesStore.fetchAll(), fixedIncomesStore.fetchAll(), allocationPlansStore.fetchAll()])
+
+  if (!allocationPlansStore.rows.length) {
+    await allocationPlansStore.create({
+      name: 'Plan principal',
+      savings_percent: 20,
+      monthly_expenses_percent: 60,
+      investments_percent: 20,
+    })
+    await allocationPlansStore.fetchAll()
+  }
+})
+
+const monthlyExpenses = computed(() =>
+  fixedExpensesStore.rows.reduce((acc, row) => acc + Number(row.amount || 0), 0),
 )
 
-const goalsProgress = computed(() =>
-  financeStore.goals
-    .filter((goal) => goal.name.toLowerCase().includes(search.value.toLowerCase()))
-    .map((goal) => ({
-      ...goal,
-      ratio: goal.targetAmount > 0 ? (goal.savedAmount / goal.targetAmount) * 100 : 0,
-      estimatedYearlyInterest: goal.savedAmount * ((goal.interestRate || 0) / 100),
-    })),
+const monthlyIncomes = computed(() =>
+  fixedIncomesStore.rows.reduce((acc, row) => acc + Number(row.amount || 0), 0),
 )
 
-const filteredSubscriptions = computed(() =>
-  financeStore.subscriptions.filter((item) => item.name.toLowerCase().includes(search.value.toLowerCase())),
-)
+const monthlyNet = computed(() => monthlyIncomes.value - monthlyExpenses.value)
+const activePlan = computed(() => allocationPlansStore.rows[0] || null)
 
-const addBudget = () => {
-  if (!budgetForm.name.trim()) {
-    return
-  }
-  financeStore.addBudget({
-    name: budgetForm.name,
-    scope: budgetForm.scope,
-    scopeId: null,
-    monthlyLimit: Number(budgetForm.monthlyLimit || 0),
-    spent: 0,
-  })
-  budgetForm.name = ''
-  budgetForm.scope = 'category'
-  budgetForm.monthlyLimit = ''
-  showBudgetModal.value = false
-}
-
-const addGoal = () => {
-  if (!goalForm.name.trim()) {
-    return
-  }
-  financeStore.addGoal({
-    name: goalForm.name,
-    targetAmount: Number(goalForm.targetAmount || 0),
-    savedAmount: Number(goalForm.savedAmount || 0),
-    interestRate: Number(goalForm.interestRate || 0),
-    deadline: goalForm.deadline || null,
-  })
-  goalForm.name = ''
-  goalForm.targetAmount = ''
-  goalForm.savedAmount = ''
-  goalForm.interestRate = ''
-  goalForm.deadline = ''
-  showGoalModal.value = false
-}
-
-const addSubscription = () => {
-  if (!subscriptionForm.name.trim()) {
-    return
-  }
-  financeStore.addSubscription({
-    name: subscriptionForm.name,
-    amount: Number(subscriptionForm.amount || 0),
-    cadence: subscriptionForm.cadence,
-    nextChargeDate: subscriptionForm.nextChargeDate || null,
-  })
-  subscriptionForm.name = ''
-  subscriptionForm.amount = ''
-  subscriptionForm.cadence = 'monthly'
-  subscriptionForm.nextChargeDate = ''
-  showSubscriptionModal.value = false
-}
-
-const openBudgetEdit = (budget) => {
-  editBudgetForm.id = budget.id
-  editBudgetForm.name = budget.name
-  editBudgetForm.scope = budget.scope
-  editBudgetForm.monthlyLimit = String(budget.monthlyLimit ?? 0)
-  editBudgetForm.spent = String(budget.spent ?? 0)
-  showEditBudgetModal.value = true
-}
-
-const saveBudgetEdit = () => {
-  if (!editBudgetForm.id || !editBudgetForm.name.trim()) {
-    return
+const suggestedDistribution = computed(() => {
+  const net = Number(monthlyNet.value || 0)
+  const plan = activePlan.value
+  if (!plan || net <= 0) {
+    return {
+      savings: 0,
+      monthlyExpenses: 0,
+      investments: 0,
+    }
   }
 
-  financeStore.updateBudget(editBudgetForm.id, {
-    name: editBudgetForm.name,
-    scope: editBudgetForm.scope,
-    monthlyLimit: Number(editBudgetForm.monthlyLimit || 0),
-    spent: Number(editBudgetForm.spent || 0),
-  })
-  showEditBudgetModal.value = false
-}
-
-const openGoalEdit = (goal) => {
-  editGoalForm.id = goal.id
-  editGoalForm.name = goal.name
-  editGoalForm.targetAmount = String(goal.targetAmount ?? 0)
-  editGoalForm.savedAmount = String(goal.savedAmount ?? 0)
-  editGoalForm.interestRate = String(goal.interestRate ?? 0)
-  editGoalForm.deadline = goal.deadline || ''
-  showEditGoalModal.value = true
-}
-
-const saveGoalEdit = () => {
-  if (!editGoalForm.id || !editGoalForm.name.trim()) {
-    return
+  return {
+    savings: Number((net * (Number(plan.savings_percent || 0) / 100)).toFixed(2)),
+    monthlyExpenses: Number((net * (Number(plan.monthly_expenses_percent || 0) / 100)).toFixed(2)),
+    investments: Number((net * (Number(plan.investments_percent || 0) / 100)).toFixed(2)),
   }
+})
 
-  financeStore.updateGoal(editGoalForm.id, {
-    name: editGoalForm.name,
-    targetAmount: Number(editGoalForm.targetAmount || 0),
-    savedAmount: Number(editGoalForm.savedAmount || 0),
-    interestRate: Number(editGoalForm.interestRate || 0),
-    deadline: editGoalForm.deadline || null,
-  })
-  showEditGoalModal.value = false
+function formatCompactAmount(value) {
+  const num = Number(value || 0)
+  const abs = Math.abs(num)
+
+  if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `${(num / 1_000).toFixed(1)}k`
+  return num.toFixed(0)
 }
 
-const openSubscriptionEdit = (subscription) => {
-  editSubscriptionForm.id = subscription.id
-  editSubscriptionForm.name = subscription.name
-  editSubscriptionForm.amount = String(subscription.amount ?? 0)
-  editSubscriptionForm.cadence = subscription.cadence
-  editSubscriptionForm.nextChargeDate = subscription.nextChargeDate || ''
-  showEditSubscriptionModal.value = true
+const fixedExpensesChartOptions = computed(() => ({
+  chart: { type: 'bar', toolbar: { show: false }, background: 'transparent' },
+  xaxis: {
+    categories: fixedExpensesStore.rows.map((row) => row.name),
+    labels: { formatter: (value) => formatCompactAmount(value) },
+  },
+  tooltip: { y: { formatter: (value) => formatCompactAmount(value) } },
+  theme: { mode: 'dark' },
+  colors: ['#c9929a'],
+  plotOptions: { bar: { borderRadius: 6, horizontal: true } },
+  dataLabels: { enabled: false },
+  grid: { borderColor: '#3a404a' },
+}))
+
+const fixedExpensesSeries = computed(() => [
+  { name: 'Gasto fijo', data: fixedExpensesStore.rows.map((row) => Number(row.amount || 0)) },
+])
+
+const fixedIncomesChartOptions = computed(() => ({
+  chart: { type: 'bar', toolbar: { show: false }, background: 'transparent' },
+  xaxis: {
+    categories: fixedIncomesStore.rows.map((row) => row.name),
+    labels: { formatter: (value) => formatCompactAmount(value) },
+  },
+  tooltip: { y: { formatter: (value) => formatCompactAmount(value) } },
+  theme: { mode: 'dark' },
+  colors: ['#8ebea7'],
+  plotOptions: { bar: { borderRadius: 6, horizontal: true } },
+  dataLabels: { enabled: false },
+  grid: { borderColor: '#3a404a' },
+}))
+
+const fixedIncomesSeries = computed(() => [
+  { name: 'Ingreso fijo', data: fixedIncomesStore.rows.map((row) => Number(row.amount || 0)) },
+])
+
+const planChartOptions = computed(() => ({
+  chart: { type: 'donut', background: 'transparent' },
+  labels: ['Ahorro', 'Operación', 'Inversión'],
+  colors: ['#8ebea7', '#9ca9d8', '#c9929a'],
+  legend: { labels: { colors: '#e9ecf3' } },
+  stroke: { colors: ['#21252d'] },
+  theme: { mode: 'dark' },
+  dataLabels: { enabled: true },
+}))
+
+const planChartSeries = computed(() => [
+  Number(activePlan.value?.savings_percent || 0),
+  Number(activePlan.value?.monthly_expenses_percent || 0),
+  Number(activePlan.value?.investments_percent || 0),
+])
+
+function resetForm() {
+  form.name = ''
+  form.amount = 0
+  form.frequency = 'monthly'
+  form.savings_percent = 20
+  form.monthly_expenses_percent = 60
+  form.investments_percent = 20
 }
 
-const saveSubscriptionEdit = () => {
-  if (!editSubscriptionForm.id || !editSubscriptionForm.name.trim()) {
-    return
+function openCreate(target) {
+  entity.value = target
+  editing.value = null
+  resetForm()
+  open.value = true
+}
+
+function openEdit(target, row) {
+  entity.value = target
+  editing.value = row
+  form.name = row.name || ''
+  form.amount = row.amount || 0
+  form.frequency = row.frequency || 'monthly'
+  form.savings_percent = row.savings_percent || 20
+  form.monthly_expenses_percent = row.monthly_expenses_percent || 60
+  form.investments_percent = row.investments_percent || 20
+  open.value = true
+}
+
+function openEditPlan() {
+  entity.value = 'allocation'
+  editing.value = activePlan.value
+  form.name = activePlan.value?.name || 'Plan principal'
+  form.savings_percent = activePlan.value?.savings_percent || 20
+  form.monthly_expenses_percent = activePlan.value?.monthly_expenses_percent || 60
+  form.investments_percent = activePlan.value?.investments_percent || 20
+  open.value = true
+}
+
+async function save() {
+  try {
+    if (entity.value === 'allocation') {
+      const payload = {
+        name: form.name || 'Plan principal',
+        savings_percent: Number(form.savings_percent),
+        monthly_expenses_percent: Number(form.monthly_expenses_percent),
+        investments_percent: Number(form.investments_percent),
+      }
+
+      if (activePlan.value?.id) {
+        await allocationPlansStore.update(activePlan.value.id, payload)
+      } else {
+        await allocationPlansStore.create(payload)
+      }
+
+      await allocationPlansStore.fetchAll()
+      uiStore.showToast('Plan actualizado', 'success')
+      open.value = false
+      return
+    }
+
+    const payload = {
+      name: form.name,
+      amount: Number(form.amount),
+      frequency: form.frequency,
+    }
+
+    const store = entity.value === 'income' ? fixedIncomesStore : fixedExpensesStore
+
+    if (editing.value) {
+      await store.update(editing.value.id, payload)
+    } else {
+      await store.create(payload)
+    }
+
+    uiStore.showToast('Registro guardado', 'success')
+    open.value = false
+  } catch (error) {
+    uiStore.showToast(error.message, 'error')
   }
+}
 
-  financeStore.updateSubscription(editSubscriptionForm.id, {
-    name: editSubscriptionForm.name,
-    amount: Number(editSubscriptionForm.amount || 0),
-    cadence: editSubscriptionForm.cadence,
-    nextChargeDate: editSubscriptionForm.nextChargeDate || null,
-  })
-  showEditSubscriptionModal.value = false
+async function remove(target, id) {
+  const store = target === 'income' ? fixedIncomesStore : fixedExpensesStore
+  await store.remove(id)
+  uiStore.showToast('Registro eliminado', 'success')
 }
 </script>
 
 <template>
-  <section class="app-page">
+  <section class="space-y-4">
     <div class="flex items-center justify-between gap-3">
-      <div>
-        <h2 class="section-title">Planificación</h2>
-        <p class="muted text-xs">Presupuestos, metas y suscripciones</p>
-      </div>
+      <h2 class="section-title">Planificación Mensual</h2>
       <div class="flex gap-2">
-        <BaseButton size="sm" variant="secondary" @click="showBudgetModal = true">+ Presupuesto</BaseButton>
-        <BaseButton size="sm" @click="showGoalModal = true">+ Meta</BaseButton>
+        <BaseButton aria-label="Nuevo gasto fijo" title="Nuevo gasto fijo" @click="openCreate('expense')">
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14M7 7l10 10" /></svg>
+        </BaseButton>
+        <BaseButton variant="success" aria-label="Nuevo ingreso fijo" title="Nuevo ingreso fijo" @click="openCreate('income')">
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
+        </BaseButton>
       </div>
     </div>
 
-    <BaseCard>
-      <BaseInput v-model="search" label="Buscar en planificación" placeholder="Ej. viaje, Netflix" />
-    </BaseCard>
+    <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <BaseCard class="border border-[#8b3d52] bg-[#57212f]/40">
+        <p class="text-xs text-muted">Gastos</p>
+        <p class="text-lg font-semibold text-[#ffb3c7]">{{ formatMoney(monthlyExpenses) }}</p>
+      </BaseCard>
+      <BaseCard class="border border-[#2b7a5c] bg-[#1d4a39]/40">
+        <p class="text-xs text-muted">Ingresos</p>
+        <p class="text-lg font-semibold text-[#98f0c6]">{{ formatMoney(monthlyIncomes) }}</p>
+      </BaseCard>
+      <BaseCard class="border border-[#5d5f86] bg-[#343550]/40">
+        <p class="text-xs text-muted">Balance neto</p>
+        <p class="text-lg font-semibold text-[#c9caee]">{{ formatMoney(monthlyNet) }}</p>
+      </BaseCard>
+      <BaseCard class="border border-[#4f7c74] bg-[#2f4541]/40">
+        <p class="text-xs text-muted">Plan activo</p>
+        <p class="text-sm font-semibold text-[#b7e2d5]">{{ activePlan?.name || 'Sin definir' }}</p>
+      </BaseCard>
+    </div>
 
     <BaseCard>
-      <h3 class="mb-2 text-sm font-semibold text-text">Presupuestos mensuales</h3>
-      <div v-if="budgetsWithAlert.length" class="space-y-2">
-        <div v-for="budget in budgetsWithAlert" :key="budget.id" class="rounded-xl border border-border bg-surface-2 p-3">
-          <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-            <div>
-              <p class="text-sm text-text">{{ budget.name }}</p>
-              <p class="text-xs text-muted">
-                {{ formatUSD(budget.spent, authStore.hideAmounts) }} / {{ formatUSD(budget.monthlyLimit, authStore.hideAmounts) }}
-              </p>
-              <p class="text-xs" :class="budget.ratio >= 100 ? 'text-danger' : budget.ratio >= 80 ? 'text-warning' : 'text-success'">
-                {{ budget.ratio >= 100 ? 'Alerta: presupuesto excedido' : budget.ratio >= 80 ? 'Atención: cerca del límite' : 'Dentro del límite' }}
-              </p>
-            </div>
-            <div class="flex gap-1 md:flex-col">
-              <button
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-primary/30 bg-primary/10 text-primary transition hover:border-primary hover:bg-primary/20"
-                @click="openBudgetEdit(budget)"
-                :title="'Editar presupuesto'"
-              >
-                <svg viewBox="0 0 20 20" fill="none" class="h-4 w-4" aria-hidden="true">
-                  <path d="M11.049 3.049a1.5 1.5 0 0 1 2.122 0l3.78 3.78a1.5 1.5 0 0 1 0 2.122l-8.5 8.5a1.5 1.5 0 0 1-.708.293l-4 1a1.5 1.5 0 0 1-1.793-1.793l1-4a1.5 1.5 0 0 1 .293-.708l8.5-8.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              <button
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-danger/30 bg-danger/10 text-danger transition hover:border-danger hover:bg-danger/20"
-                @click="financeStore.deleteBudget(budget.id)"
-                :title="'Eliminar presupuesto'"
-              >
-                <svg viewBox="0 0 20 20" fill="none" class="h-4 w-4" aria-hidden="true">
-                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 1.06 1.06L10 8.94 6.28 5.22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-            </div>
-          </div>
+      <div class="flex justify-center">
+        <div class="relative inline-grid grid-cols-3 rounded-full border border-surfaceAlt bg-surfaceAlt/40 p-1">
+          <span
+            class="absolute left-1 top-1 h-[calc(100%-0.5rem)] w-[calc((100%-0.5rem)/3)] rounded-full bg-primary/25 shadow-soft transition-transform duration-200"
+            :class="
+              activeSection === 'expenses'
+                ? 'translate-x-0'
+                : activeSection === 'incomes'
+                  ? 'translate-x-full'
+                  : 'translate-x-[200%]'
+            "
+          />
+          <button
+            type="button"
+            class="relative z-10 rounded-full px-4 py-1.5 text-sm font-medium transition"
+            :class="activeSection === 'expenses' ? 'text-primary' : 'text-muted hover:text-text'"
+            @click="activeSection = 'expenses'"
+          >
+            Gastos
+          </button>
+          <button
+            type="button"
+            class="relative z-10 rounded-full px-4 py-1.5 text-sm font-medium transition"
+            :class="activeSection === 'incomes' ? 'text-primary' : 'text-muted hover:text-text'"
+            @click="activeSection = 'incomes'"
+          >
+            Ingresos
+          </button>
+          <button
+            type="button"
+            class="relative z-10 rounded-full px-4 py-1.5 text-sm font-medium transition"
+            :class="activeSection === 'plan' ? 'text-primary' : 'text-muted hover:text-text'"
+            @click="activeSection = 'plan'"
+          >
+            Plan
+          </button>
         </div>
       </div>
-      <p v-else class="text-xs text-muted">No hay presupuestos para mostrar.</p>
     </BaseCard>
 
-    <BaseCard>
-      <h3 class="mb-2 text-sm font-semibold text-text">Metas de ahorro</h3>
-      <div v-if="goalsProgress.length" class="space-y-2">
-        <div v-for="goal in goalsProgress" :key="goal.id" class="rounded-xl border border-border bg-surface-2 p-3">
-          <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-            <div class="min-w-0 flex-1">
-              <p class="text-sm text-text">{{ goal.name }}</p>
-              <p class="text-xs text-muted">Meta: {{ formatUSD(goal.targetAmount, authStore.hideAmounts) }} · Vence: {{ goal.deadline || 'Sin fecha' }}</p>
-              <p class="text-xs text-muted">Interés anual: {{ Number(goal.interestRate || 0).toFixed(2) }}% · Estimado: {{ formatUSD(goal.estimatedYearlyInterest, authStore.hideAmounts) }}</p>
-              <div class="mt-2 h-2 rounded-full bg-surface">
-                <div class="h-2 rounded-full bg-primary" :style="{ width: `${Math.min(goal.ratio, 100)}%` }" />
-              </div>
-            </div>
-            <div class="flex gap-1 md:flex-col">
-              <button
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-primary/30 bg-primary/10 text-primary transition hover:border-primary hover:bg-primary/20"
-                @click="openGoalEdit(goal)"
-                :title="'Editar meta'"
-              >
-                <svg viewBox="0 0 20 20" fill="none" class="h-4 w-4" aria-hidden="true">
-                  <path d="M11.049 3.049a1.5 1.5 0 0 1 2.122 0l3.78 3.78a1.5 1.5 0 0 1 0 2.122l-8.5 8.5a1.5 1.5 0 0 1-.708.293l-4 1a1.5 1.5 0 0 1-1.793-1.793l1-4a1.5 1.5 0 0 1 .293-.708l8.5-8.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              <button
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-danger/30 bg-danger/10 text-danger transition hover:border-danger hover:bg-danger/20"
-                @click="financeStore.deleteGoal(goal.id)"
-                :title="'Eliminar meta'"
-              >
-                <svg viewBox="0 0 20 20" fill="none" class="h-4 w-4" aria-hidden="true">
-                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 1.06 1.06L10 8.94 6.28 5.22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
+    <template v-if="activeSection === 'expenses'">
+      <BaseCard>
+        <h3 class="mb-2 text-sm font-semibold">Distribución de gastos fijos</h3>
+        <apexchart type="bar" height="220" :options="fixedExpensesChartOptions" :series="fixedExpensesSeries" />
+      </BaseCard>
+
+      <div class="grid gap-3">
+        <BaseCard v-for="row in fixedExpensesStore.rows" :key="row.id" class="flex items-center justify-between gap-3 border border-[#8b3d52]/60 bg-[#57212f]/25">
+          <div class="min-w-0 space-y-1">
+            <p class="truncate text-sm font-medium text-text">{{ row.name }}</p>
+            <p class="text-xs text-muted">Frecuencia: {{ row.frequency }}</p>
+            <p class="text-sm font-semibold text-[#ffb3c7]">{{ formatMoney(row.amount) }}</p>
+          </div>
+          <ActionButtons @edit="openEdit('expense', row)" @delete="remove('expense', row.id)" />
+        </BaseCard>
+      </div>
+    </template>
+
+    <template v-else-if="activeSection === 'incomes'">
+      <BaseCard>
+        <h3 class="mb-2 text-sm font-semibold">Distribución de ingresos fijos</h3>
+        <apexchart type="bar" height="220" :options="fixedIncomesChartOptions" :series="fixedIncomesSeries" />
+      </BaseCard>
+
+      <div class="grid gap-3">
+        <BaseCard v-for="row in fixedIncomesStore.rows" :key="row.id" class="flex items-center justify-between gap-3 border border-[#2b7a5c]/60 bg-[#1d4a39]/25">
+          <div class="min-w-0 space-y-1">
+            <p class="truncate text-sm font-medium text-text">{{ row.name }}</p>
+            <p class="text-xs text-muted">Frecuencia: {{ row.frequency }}</p>
+            <p class="text-sm font-semibold text-[#98f0c6]">{{ formatMoney(row.amount) }}</p>
+          </div>
+          <ActionButtons @edit="openEdit('income', row)" @delete="remove('income', row.id)" />
+        </BaseCard>
+      </div>
+    </template>
+
+    <template v-else>
+      <BaseCard>
+        <div class="mb-3 flex items-center justify-between">
+          <h3 class="text-sm font-semibold">Plan de distribución (único)</h3>
+          <BaseButton @click="openEditPlan">Editar plan</BaseButton>
+        </div>
+
+        <div class="grid gap-3 lg:grid-cols-2">
+          <div class="space-y-2 rounded-lg border border-surfaceAlt bg-surfaceAlt/25 p-3">
+            <p class="text-sm font-medium text-text">{{ activePlan?.name || 'Plan principal' }}</p>
+            <p class="text-xs text-muted">Ahorro {{ activePlan?.savings_percent || 0 }}%</p>
+            <p class="text-xs text-muted">Operación {{ activePlan?.monthly_expenses_percent || 0 }}%</p>
+            <p class="text-xs text-muted">Inversión {{ activePlan?.investments_percent || 0 }}%</p>
+
+            <div class="mt-2 rounded-md border border-surfaceAlt/90 bg-surfaceAlt/30 p-2 text-xs">
+              <p class="text-muted">Ahorro sugerido: <span class="text-text">{{ formatMoney(suggestedDistribution.savings) }}</span></p>
+              <p class="text-muted">Operación sugerida: <span class="text-text">{{ formatMoney(suggestedDistribution.monthlyExpenses) }}</span></p>
+              <p class="text-muted">Inversión sugerida: <span class="text-text">{{ formatMoney(suggestedDistribution.investments) }}</span></p>
             </div>
           </div>
-        </div>
-      </div>
-      <p v-else class="text-xs text-muted">No hay metas para mostrar.</p>
-    </BaseCard>
 
-    <BaseCard>
-      <div class="mb-2 flex items-center justify-between gap-2">
-        <h3 class="text-sm font-semibold text-text">Suscripciones</h3>
-        <BaseButton size="sm" variant="secondary" @click="showSubscriptionModal = true">+ Suscripción</BaseButton>
-      </div>
-      <div v-if="filteredSubscriptions.length" class="space-y-2">
-        <div v-for="subscription in filteredSubscriptions" :key="subscription.id" class="rounded-xl border border-border bg-surface-2 p-3">
-          <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-            <div>
-              <p class="text-sm text-text">{{ subscription.name }}</p>
-              <p class="text-xs text-muted">{{ formatUSD(subscription.amount, authStore.hideAmounts) }} · {{ subscription.cadence }}</p>
-              <p class="text-xs text-muted">Próximo cargo: {{ subscription.nextChargeDate || 'Sin fecha' }}</p>
-            </div>
-            <div class="flex gap-1 md:flex-col">
-              <button
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-primary/30 bg-primary/10 text-primary transition hover:border-primary hover:bg-primary/20"
-                @click="openSubscriptionEdit(subscription)"
-                :title="'Editar suscripción'"
-              >
-                <svg viewBox="0 0 20 20" fill="none" class="h-4 w-4" aria-hidden="true">
-                  <path d="M11.049 3.049a1.5 1.5 0 0 1 2.122 0l3.78 3.78a1.5 1.5 0 0 1 0 2.122l-8.5 8.5a1.5 1.5 0 0 1-.708.293l-4 1a1.5 1.5 0 0 1-1.793-1.793l1-4a1.5 1.5 0 0 1 .293-.708l8.5-8.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              <button
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-danger/30 bg-danger/10 text-danger transition hover:border-danger hover:bg-danger/20"
-                @click="financeStore.deleteSubscription(subscription.id)"
-                :title="'Eliminar suscripción'"
-              >
-                <svg viewBox="0 0 20 20" fill="none" class="h-4 w-4" aria-hidden="true">
-                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 1.06 1.06L10 8.94 6.28 5.22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-            </div>
+          <div>
+            <apexchart type="donut" height="240" :options="planChartOptions" :series="planChartSeries" />
           </div>
         </div>
-      </div>
-      <p v-else class="text-xs text-muted">No hay suscripciones para mostrar.</p>
-    </BaseCard>
+      </BaseCard>
+    </template>
 
-    <BaseModal :open="showBudgetModal" title="Agregar presupuesto" @close="showBudgetModal = false">
-      <div class="space-y-3">
-        <BaseInput v-model="budgetForm.name" label="Nombre" placeholder="Ej. Gastos hogar" />
-        <BaseSelect
-          v-model="budgetForm.scope"
-          label="Ámbito"
-          :options="[
-            { value: 'category', label: 'Categoría' },
-            { value: 'account', label: 'Cuenta' },
-          ]"
-        />
-        <BaseInput v-model="budgetForm.monthlyLimit" type="number" label="Límite mensual" placeholder="0.00" />
-        <BaseButton block @click="addBudget">Guardar presupuesto</BaseButton>
-      </div>
-    </BaseModal>
+    <BaseModal :open="open" :title="editing ? 'Editar registro' : 'Nuevo registro'" @close="open = false">
+      <form class="space-y-3" @submit.prevent="save">
+        <template v-if="entity === 'expense' || entity === 'income'">
+          <BaseInput v-model="form.name" :label="entity === 'expense' ? 'Gasto fijo' : 'Ingreso fijo'" required />
+          <div class="grid grid-cols-2 gap-3">
+            <BaseInput v-model="form.amount" label="Monto" type="number" step="0.01" required />
+            <BaseSelect v-model="form.frequency" label="Frecuencia" :options="frequencyOptions" required />
+          </div>
+        </template>
 
-    <BaseModal :open="showGoalModal" title="Agregar meta" @close="showGoalModal = false">
-      <div class="space-y-3">
-        <BaseInput v-model="goalForm.name" label="Nombre" placeholder="Ej. Fondo viaje" />
-        <BaseInput v-model="goalForm.targetAmount" type="number" label="Objetivo" placeholder="0.00" />
-        <BaseInput v-model="goalForm.savedAmount" type="number" label="Ahorro actual" placeholder="0.00" />
-        <BaseInput v-model="goalForm.interestRate" type="number" label="Interés anual (%)" placeholder="0.00" />
-        <BaseInput v-model="goalForm.deadline" type="date" label="Fecha objetivo" />
-        <BaseButton block @click="addGoal">Guardar meta</BaseButton>
-      </div>
-    </BaseModal>
+        <template v-else>
+          <BaseInput v-model="form.name" label="Nombre del plan" required />
+          <div class="grid grid-cols-3 gap-3">
+            <BaseInput v-model="form.savings_percent" label="% Ahorro" type="number" step="0.01" required />
+            <BaseInput v-model="form.monthly_expenses_percent" label="% Operación" type="number" step="0.01" required />
+            <BaseInput v-model="form.investments_percent" label="% Inversión" type="number" step="0.01" required />
+          </div>
+        </template>
 
-    <BaseModal :open="showSubscriptionModal" title="Agregar suscripción" @close="showSubscriptionModal = false">
-      <div class="space-y-3">
-        <BaseInput v-model="subscriptionForm.name" label="Nombre" placeholder="Ej. Netflix" />
-        <BaseInput v-model="subscriptionForm.amount" type="number" label="Monto" placeholder="0.00" />
-        <BaseSelect
-          v-model="subscriptionForm.cadence"
-          label="Frecuencia"
-          :options="[
-            { value: 'monthly', label: 'Mensual' },
-            { value: 'yearly', label: 'Anual' },
-          ]"
-        />
-        <BaseInput v-model="subscriptionForm.nextChargeDate" type="date" label="Próximo cobro" />
-        <BaseButton block @click="addSubscription">Guardar suscripción</BaseButton>
-      </div>
-    </BaseModal>
-
-    <BaseModal :open="showEditBudgetModal" title="Editar presupuesto" @close="showEditBudgetModal = false">
-      <div class="space-y-3">
-        <BaseInput v-model="editBudgetForm.name" label="Nombre" />
-        <BaseSelect
-          v-model="editBudgetForm.scope"
-          label="Ámbito"
-          :options="[
-            { value: 'category', label: 'Categoría' },
-            { value: 'account', label: 'Cuenta' },
-          ]"
-        />
-        <BaseInput v-model="editBudgetForm.monthlyLimit" type="number" label="Límite mensual" />
-        <BaseInput v-model="editBudgetForm.spent" type="number" label="Gastado" />
-        <BaseButton block @click="saveBudgetEdit">Guardar cambios</BaseButton>
-      </div>
-    </BaseModal>
-
-    <BaseModal :open="showEditGoalModal" title="Editar meta" @close="showEditGoalModal = false">
-      <div class="space-y-3">
-        <BaseInput v-model="editGoalForm.name" label="Nombre" />
-        <BaseInput v-model="editGoalForm.targetAmount" type="number" label="Objetivo" />
-        <BaseInput v-model="editGoalForm.savedAmount" type="number" label="Ahorro actual" />
-        <BaseInput v-model="editGoalForm.interestRate" type="number" label="Interés anual (%)" />
-        <BaseInput v-model="editGoalForm.deadline" type="date" label="Fecha objetivo" />
-        <BaseButton block @click="saveGoalEdit">Guardar cambios</BaseButton>
-      </div>
-    </BaseModal>
-
-    <BaseModal :open="showEditSubscriptionModal" title="Editar suscripción" @close="showEditSubscriptionModal = false">
-      <div class="space-y-3">
-        <BaseInput v-model="editSubscriptionForm.name" label="Nombre" />
-        <BaseInput v-model="editSubscriptionForm.amount" type="number" label="Monto" />
-        <BaseSelect
-          v-model="editSubscriptionForm.cadence"
-          label="Frecuencia"
-          :options="[
-            { value: 'monthly', label: 'Mensual' },
-            { value: 'yearly', label: 'Anual' },
-          ]"
-        />
-        <BaseInput v-model="editSubscriptionForm.nextChargeDate" type="date" label="Próximo cobro" />
-        <BaseButton block @click="saveSubscriptionEdit">Guardar cambios</BaseButton>
-      </div>
+        <BaseButton type="submit" block>Guardar</BaseButton>
+      </form>
     </BaseModal>
   </section>
 </template>
